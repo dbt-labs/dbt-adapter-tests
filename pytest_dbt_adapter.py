@@ -58,6 +58,21 @@ NAMES_EXTENDED = NAMES_BASE + """
 """.lstrip()
 
 
+NAMES_ADD_COLUMN = """
+id,name,some_date,last_initial
+1,Easton,1981-05-20T06:46:51,A
+2,Lillian,1978-09-03T18:10:33,B
+3,Jeremiah,1982-03-11T03:59:51,C
+4,Nolan,1976-05-06T20:21:35,D
+5,Hannah,1982-06-23T05:41:26,E
+6,Eleanor,1991-08-10T23:12:21,F
+7,Lily,1971-03-29T14:58:02,G
+8,Jonathan,1988-02-26T02:55:24,H
+9,Adrian,1994-02-09T13:14:23,I
+10,Nora,1976-03-01T16:51:39,J
+""".lstrip()
+
+
 class Model:
     def __init__(self, config, body):
         self.config = config
@@ -304,12 +319,68 @@ INCREMENTAL_PROJECT = {
 }
 
 
+SNAPSHOT_PROJECT = {
+    'name': 'snapshot',
+    'paths': {
+        'data/base.csv': NAMES_BASE,
+        'data/newcolumns.csv': NAMES_ADD_COLUMN,
+        'data/added.csv': NAMES_EXTENDED,
+        'snapshots/snapshot.sql': '''
+            {% snapshot cc_snapshot %}
+                {{ config(
+                    check_cols='all', unique_key='id', strategy='check',
+                    target_database=database, target_schema=schema
+                ) }}
+                select * from {{ ref(var('seed_name', 'base')) }}
+            {% endsnapshot %}
+
+            {% snapshot ts_snapshot %}
+                {{ config(
+                    strategy='timestamp',
+                    unique_key='id',
+                    updated_at='some_date',
+                    target_database=database,
+                    target_schema=schema,
+                )}}
+                select * from {{ ref(var('seed_name', 'base')) }}
+            {% endsnapshot %}
+        '''
+    },
+    'facts': {
+        'seed': {
+            'length': 3,
+            'names': ['base', 'newcolumns', 'added'],
+        },
+        'snapshot': {
+            'length': 2,
+            'names': ['cc_snapshot', 'ts_snapshot'],
+        },
+        'base': {
+            'rowcount': 10,
+        },
+        'added': {
+            'rowcount': 20,
+        },
+        'newcolumns': {
+            'rowcount': 10,
+        },
+        'added_plus_ten': {
+            'rowcount': 30,
+        },
+        'added_plus_twenty': {
+            'rowcount': 40,
+        },
+    },
+}
+
+
 DEFAULT_PROJECTS = {
     p['name']: p for p in [
         EMPTY_PROJECT,
         BASE_PROJECT,
         EPHEMERAL_PROJECT,
         INCREMENTAL_PROJECT,
+        SNAPSHOT_PROJECT,
     ]
 }
 
@@ -431,6 +502,69 @@ BUILTIN_TEST_SEQUENCES = {
             sources:
               length: fact.catalog.sources.length
     '''),
+    'snapshot': yaml.safe_load('''
+        project: snapshot
+        sequence:
+          - type: dbt
+            cmd: seed
+          - type: run_results
+            length: fact.seed.length
+          - type: dbt
+            cmd: snapshot
+          - type: relation_rows
+            name: cc_snapshot
+            length: fact.base.rowcount
+          - type: relation_rows
+            name: ts_snapshot
+            length: fact.base.rowcount
+         # point at the "added" seed so the snapshot sees 10 new rows
+          - type: dbt
+            cmd: snapshot
+            vars:
+              seed_name: added
+          - type: relation_rows
+            name: cc_snapshot
+            length: fact.added.rowcount
+          - type: relation_rows
+            name: ts_snapshot
+            length: fact.added.rowcount
+         # update some timestamps in the "added" seed so the snapshot sees 10 more new rows
+          - type: update_rows
+            name: added
+            dst_col: some_date
+            clause:
+              src_col: some_date
+              type: add_timestamp
+            where: id > 10 and id < 21
+          - type: dbt
+            cmd: snapshot
+            vars:
+              seed_name: added
+          - type: relation_rows
+            name: ts_snapshot
+            length: fact.added_plus_ten.rowcount
+          - type: relation_rows
+            name: cc_snapshot
+            length: fact.added_plus_ten.rowcount
+          - type: update_rows
+            name: added
+            dst_col: name
+            clause:
+              src_col: name
+              type: add_string
+              value: _updated
+            where: id < 11
+          - type: dbt
+            cmd: snapshot
+            vars:
+              seed_name: added
+          - type: relation_rows
+            name: ts_snapshot
+            length: fact.added_plus_ten.rowcount
+          - type: relation_rows
+            name: cc_snapshot
+            length: fact.added_plus_twenty.rowcount
+    ''')
 }
 
 
@@ -613,13 +747,21 @@ class DbtItem(pytest.Item):
                 f'Got item type cmd, but no cmd in {sequence_item}'
             )
         cmd = shlex.split(sequence_item['cmd'])
+        partial_parse = sequence_item.get('partial_parse', False)
         extra = [
             '--target', 'default',
             '--profile', 'dbt-pytest',
             '--profiles-dir', tmpdir,
             '--project-dir', os.path.join(tmpdir, 'project')
         ]
-        full_cmd = ['dbt', '--debug'] + cmd + extra
+        base_cmd = ['dbt', '--debug']
+
+        if partial_parse:
+            base_cmd.append('--partial-parse')
+        else:
+            base_cmd.append('--no-partial-parse')
+
+        full_cmd = base_cmd + cmd + extra
         cli_vars = sequence_item.get('vars', {}).copy()
         cli_vars.update(self._base_vars())
         if cli_vars:
@@ -774,8 +916,94 @@ class DbtItem(pytest.Item):
                 f'select count(*) as num_rows from {relation}',
                 fetch=True
             )
-        assert len(tbl) == 1 and len(tbl[0]) == 1
-        assert tbl[0][0] == length
+
+        assert len(tbl) == 1 and len(tbl[0]) == 1, \
+            'count did not return 1 row with 1 column'
+        assert tbl[0][0] == length, \
+            f'expected {name} to have {length} rows, but it has {tbl[0][0]}'
+
+    def _generate_update_clause(self, clause) -> str:
+        if 'type' not in clause:
+            raise TestProcessingException(
+                'invalid update_rows clause: no type'
+            )
+        clause_type = clause['type']
+
+        if clause_type == 'add_timestamp':
+            if 'src_col' not in clause:
+                raise TestProcessingException(
+                    'Invalid update_rows clause: no src_col'
+                )
+            add_to = self.get_fact(clause['src_col'])
+            kwargs = {
+                k: self.get_fact(v) for k, v in clause.items()
+                if k in ('interval', 'number')
+            }
+            with self.adapter.connection_named('_test'):
+                return self.adapter.timestamp_add_sql(
+                    add_to=add_to,
+                    **kwargs
+                )
+        elif clause_type == 'add_string':
+            if 'src_col' not in clause:
+                raise TestProcessingException(
+                    'Invalid update_rows clause: no src_col'
+                )
+            if 'value' not in clause:
+                raise TestProcessingException(
+                    'Invalid update_rows clause: no value'
+                )
+            src_col = self.get_fact(clause['src_col'])
+            value = self.get_fact(clause['value'])
+            location = clause.get('location', 'append')
+            with self.adapter.connection_named('_test'):
+                return self.adapter.string_add_sql(
+                    src_col, value, location
+                )
+        else:
+            raise TestProcessingException(
+                f'Unknown clause type in update_rows: {clause_type}'
+            )
+
+    def step_update_rows(self, sequence_item):
+        """
+            type: update_rows
+            name: base
+            dst_col: some_date
+            clause:
+              type: add_timestamp
+              src_col: some_date
+            where: id > 10
+        """
+        if 'name' not in sequence_item:
+            raise TestProcessingException('Invalid update_rows: no name')
+        if 'dst_col' not in sequence_item:
+            raise TestProcessingException('Invalid update_rows: no dst_col')
+
+        if 'clause' not in sequence_item:
+            raise TestProcessingException('Invalid update_rows: no clause')
+
+        clause = self.get_fact(sequence_item['clause'])
+        if isinstance(clause, dict):
+            clause = self._generate_update_clause(clause)
+
+        where = None
+        if 'where' in sequence_item:
+            where = self.get_fact(sequence_item['where'])
+
+        name = self.get_fact(sequence_item['name'])
+        dst_col = self.get_fact(sequence_item['dst_col'])
+        relation = self._relation_from_name(name)
+
+        with self.adapter.connection_named('_test'):
+            sql = self.adapter.update_column_sql(
+                dst_name=str(relation),
+                dst_column=dst_col,
+                clause=clause,
+                where_clause=where,
+            )
+            self.adapter.execute(sql, auto_begin=True)
+            self.adapter.commit_if_has_connection()
 
     def _write_profile(self, tmpdir):
         profile_data = {
@@ -792,6 +1020,44 @@ class DbtItem(pytest.Item):
         with open(os.path.join(tmpdir, 'profiles.yml'), 'w') as fp:
             fp.write(yaml.safe_dump(profile_data))
 
+    def _add_context(self, error_str, idx, test_item):
+        item_type = test_item['type']
+        return f'{error_str} in test index {idx} (item_type={item_type})'
+
+    def run_test_item(self, idx, test_item, tmpdir):
+        try:
+            item_type = test_item['type']
+        except KeyError:
+            raise TestProcessingException(
+                f'Could not find type in {test_item}'
+            ) from None
+        print(f'Executing step {idx+1}/{len(self.sequence)}')
+        try:
+            if item_type == 'dbt':
+                assert os.path.exists(tmpdir)
+                self.step_dbt(test_item, tmpdir)
+            elif item_type == 'run_results':
+                self.step_run_results(test_item, tmpdir)
+            elif item_type == 'catalog':
+                self.step_catalog(test_item, tmpdir)
+            elif item_type == 'relations_equal':
+                self.step_relations_equal(test_item)
+            elif item_type == 'relation_rows':
+                self.step_relation_rows(test_item)
+            elif item_type == 'update_rows':
+                self.step_update_rows(test_item)
+            else:
+                raise TestProcessingException(
+                    f'Unknown item type {item_type}'
+                )
+        except AssertionError as exc:
+            if len(exc.args) == 1:
+                arg = self._add_context(exc.args[0], idx, test_item)
+                exc.args = (arg,)
+            else:  # uhhhhhhh
+                exc.args = exc.args + (self._add_context('', idx, test_item),)
+            raise
+
     def runtest(self):
         FACTORY.reset_adapters()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -799,28 +1065,8 @@ class DbtItem(pytest.Item):
             self.project.write(tmpdir)
             self.adapter = self._get_adapter(tmpdir)
 
-            for test_item in self.sequence:
-                try:
-                    item_type = test_item['type']
-                except KeyError:
-                    raise TestProcessingException(
-                        f'Could not find type in {test_item}'
-                    ) from None
-                if item_type == 'dbt':
-                    assert os.path.exists(tmpdir)
-                    self.step_dbt(test_item, tmpdir)
-                elif item_type == 'run_results':
-                    self.step_run_results(test_item, tmpdir)
-                elif item_type == 'catalog':
-                    self.step_catalog(test_item, tmpdir)
-                elif item_type == 'relations_equal':
-                    self.step_relations_equal(test_item)
-                elif item_type == 'relation_rows':
-                    self.step_relation_rows(test_item)
-                else:
-                    raise TestProcessingException(
-                        f'Unknown item type {item_type}'
-                    )
+            for idx, test_item in enumerate(self.sequence):
+                self.run_test_item(idx, test_item, tmpdir)
 
         return True
 
