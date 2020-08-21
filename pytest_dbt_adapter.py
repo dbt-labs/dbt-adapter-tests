@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime
 from itertools import chain, repeat
 from subprocess import run, CalledProcessError
-from typing import Dict, Any
+from typing import Dict, Any, Iterable
 
 import pytest
 import yaml
@@ -20,6 +20,16 @@ from dbt.main import parse_args
 def pytest_collect_file(parent, path):
     if path.ext == ".dbtspec":  # and path.basename.startswith("test"):
         return DbtSpecFile.from_parent(parent, fspath=path)
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup('dbtadapter')
+    group.addoption(
+        '--no-drop-schema',
+        action='store_false',
+        dest='drop_schema',
+
+    )
 
 
 DEFAULT_DBT_PROJECT = {
@@ -127,6 +137,18 @@ class DbtProject:
             fullpath = os.path.join(project_path, relpath)
             os.makedirs(os.path.dirname(fullpath), exist_ok=True)
 
+            if isinstance(contents, str) and contents.startswith('files.'):
+                contents_path = contents.split('.')[1:]
+                cur = KNOWN_FILES
+                for part in contents_path:
+                    if part not in cur:
+                        raise TestProcessingException(
+                            f'at known file lookup {contents}, could not find '
+                            f'part {part} in known files path'
+                        )
+                    cur = cur[part]
+                contents = cur
+
             if relpath.startswith('models/') and relpath.endswith('.sql'):
                 if isinstance(contents, dict):
                     model = Model.from_dict(contents)
@@ -138,18 +160,40 @@ class DbtProject:
                 fp.write(contents)
 
     @classmethod
-    def from_dict(cls, dct):
-        dbt_project_yml = DEFAULT_DBT_PROJECT.copy()
+    def from_dict(cls, dct, overriding=None):
+        if overriding is None:
+            overriding = {}
+
+        paths: Dict[str, Any]
+        facts: Dict[str, Any]
+        dbt_project_yml: Dict[str, Any]
+
+        if 'overrides' in dct:
+            name = dct['overrides']
+            if name not in overriding:
+                raise TestProcessingException(
+                    f'Invalid project definition, override name {name} not '
+                    'known'
+                ) from None
+            dbt_project_yml = overriding[name].dbt_project_yml.copy()
+            paths = overriding[name].paths.copy()
+            facts = overriding[name].facts.copy()
+        else:
+            try:
+                name = dct['name']
+            except KeyError:
+                raise TestProcessingException(
+                    f'Invalid project definition, no name in {dct}'
+                ) from None
+
+            dbt_project_yml = DEFAULT_DBT_PROJECT.copy()
+            paths = {}
+            facts = {}
+
         dbt_project_yml.update(dct.get('dbt_project_yml', {}))
 
-        paths: Dict[str, str] = dct.get('paths', {})
-        facts: Dict[str, Any] = dct.get('facts', {})
-        try:
-            name = dct['name']
-        except KeyError:
-            raise TestProcessingException(
-                f'Invalid project definition, no name in {dct}'
-            ) from None
+        paths.update(dct.get('paths', {}))
+        facts.update(dct.get('facts', {}))
         return cls(
             name=name,
             dbt_project_yml=dbt_project_yml,
@@ -168,108 +212,44 @@ sources:
         identifier: "{{ var('seed_name', 'base') }}"
 """
 
+TEST_SEEDS_SCHEMA_YML_TEST_BASE = """
+version: 2
+models:
+  - name: base
+    columns:
+     - name: id
+       tests:
+         - not_null
+"""
 
-EMPTY_PROJECT = {
-    'name': 'empty',
-    'facts': {
-        'seed': {
-            'length': 0,
-        },
-        'run': {
-            'length': 0,
-        },
-        'catalog': {
-            'nodes': {
-                'length': 0,
-            },
-            'sources': {
-                'length': 0,
-            },
-        },
-    },
-}
+TEST_MODELS_SCHEMA_YML_TEST_VIEW = """
+version: 2
+models:
+  - name: view
+    columns:
+     - name: id
+       tests:
+         - not_null
+"""
 
-BASE_PROJECT = {
-    'name': 'base',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'models/view.sql': {
-            'materialized': 'view',
-            'body': "select * from {{ source('raw', 'seed') }}",
-        },
-        'models/table.sql': {
-            'materialized': 'table',
-            'body': "select * from {{ source('raw', 'seed') }}",
-        },
-        'models/schema.yml': SEED_SOURCE_YML,
-    },
-    'facts': {
-        'seed': {
-            'length': 1,
-            'names': ['base'],
-            'rowcount': 10,
-        },
-        'run': {
-            'length': 2,
-            'names': ['view', 'table'],
-        },
-        'catalog': {
-            'nodes': {
-                'length': 3,
-            },
-            'sources': {
-                'length': 1,
-            },
-        },
-        'persisted_relations': ['base', 'view', 'table'],
-        'base': {
-            'rowcount': 10,
-        },
-    },
-}
+TEST_MODELS_SCHEMA_YML_TEST_TABLE = """
+version: 2
+models:
+  - name: table
+    columns:
+     - name: id
+       tests:
+         - not_null
+"""
 
 
-EPHEMERAL_PROJECT = {
-    'name': 'ephemeral',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'models/ephemeral.sql': {
-            'materialized': 'ephemeral',
-            'body': "select * from {{ source('raw', 'seed') }}",
-        },
-        'models/view.sql': {
-            'materialized': 'view',
-            'body': "select * from {{ ref('ephemeral') }}",
-        },
-        'models/table.sql': {
-            'materialized': 'table',
-            'body': "select * from {{ ref('ephemeral') }}",
-        },
-        'models/schema.yml': SEED_SOURCE_YML,
-    },
-    'facts': {
-        'seed': {
-            'length': 1,
-            'names': ['base'],
-        },
-        'run': {
-            'length': 2,
-            'names': ['view', 'table'],
-        },
-        'catalog': {
-            'nodes': {
-                'length': 3,
-            },
-            'sources': {
-                'length': 1,
-            },
-        },
-        'persisted_relations': ['base', 'view', 'table'],
-        'base': {
-            'rowcount': 10,
-        },
-    },
-}
+TEST_PASSING_DATA_TEST = """
+select 1 as id limit 0
+"""
+
+TEST_FAILING_DATA_TEST = """
+select 1 as id
+"""
 
 
 INCREMENTAL_MODEL = """
@@ -280,98 +260,271 @@ where id > (select max(id) from {{ this }})
 """.strip()
 
 
-INCREMENTAL_PROJECT = {
-    'name': 'incremental',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'data/extended.csv': NAMES_EXTENDED,
-        'models/incremental.sql': {
+CC_SNAPSHOT_SQL = '''
+{% snapshot cc_snapshot %}
+    {{ config(
+        check_cols='all', unique_key='id', strategy='check',
+        target_database=database, target_schema=schema
+    ) }}
+    select * from {{ ref(var('seed_name', 'base')) }}
+{% endsnapshot %}
+'''.strip()
+
+
+TS_SNAPSHOT_SQL = '''
+{% snapshot ts_snapshot %}
+    {{ config(
+        strategy='timestamp',
+        unique_key='id',
+        updated_at='some_date',
+        target_database=database,
+        target_schema=schema,
+    )}}
+    select * from {{ ref(var('seed_name', 'base')) }}
+{% endsnapshot %}
+'''.strip()
+
+KNOWN_FILES = {
+    'seeds': {
+        'base': NAMES_BASE,
+        'newcolumns': NAMES_ADD_COLUMN,
+        'added': NAMES_EXTENDED,
+    },
+    'models': {
+        'base_table': {
+            'materialized': 'table',
+            'body': "select * from {{ source('raw', 'seed') }}",
+        },
+        'base_view': {
+            'materialized': 'view',
+            'body': "select * from {{ source('raw', 'seed') }}",
+        },
+        'ephemeral': {
+            'materialized': 'ephemeral',
+            'body': "select * from {{ source('raw', 'seed') }}",
+        },
+        'ephemeral_view': {
+            'materialized': 'view',
+            'body': "select * from {{ ref('ephemeral') }}",
+        },
+        'ephemeral_table': {
+            'materialized': 'table',
+            'body': "select * from {{ ref('ephemeral') }}",
+        },
+        'incremental': {
             'materialized': 'incremental',
             'body': INCREMENTAL_MODEL,
-        },
-        'models/schema.yml': SEED_SOURCE_YML,
+        }
     },
-    'facts': {
-        'seed': {
-            'length': 2,
-            'names': ['base', 'extended'],
-        },
-        'run': {
-            'length': 1,
-            'names': ['incremental'],
-        },
-        'catalog': {
-            'nodes': {
-                'length': 3,
-            },
-            'sources': {
-                'length': 1,
-            },
-        },
-        'persisted_relations': ['base', 'extended', 'incremental'],
-        'base': {
-            'rowcount': 10,
-        },
-        'extended': {
-            'rowcount': 20,
-        },
+    'snapshots': {
+        'check_cols': CC_SNAPSHOT_SQL,
+        'timestamp': TS_SNAPSHOT_SQL,
+    },
+    'tests': {
+        'passing': TEST_PASSING_DATA_TEST,
+        'failing': TEST_FAILING_DATA_TEST,
+    },
+    'schemas': {
+        'base': SEED_SOURCE_YML,
+        'test_seed': TEST_SEEDS_SCHEMA_YML_TEST_BASE,
+        'test_view': TEST_MODELS_SCHEMA_YML_TEST_VIEW,
+        'test_table': TEST_MODELS_SCHEMA_YML_TEST_TABLE,
     },
 }
 
 
-SNAPSHOT_PROJECT = {
-    'name': 'snapshot',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'data/newcolumns.csv': NAMES_ADD_COLUMN,
-        'data/added.csv': NAMES_EXTENDED,
-        'snapshots/snapshot.sql': '''
-            {% snapshot cc_snapshot %}
-                {{ config(
-                    check_cols='all', unique_key='id', strategy='check',
-                    target_database=database, target_schema=schema
-                ) }}
-                select * from {{ ref(var('seed_name', 'base')) }}
-            {% endsnapshot %}
+EMPTY_PROJECT = yaml.safe_load('''
+    name: empty
+    facts:
+        seed:
+            length: 0
+        run:
+            length: 0
+        catalog:
+            nodes:
+                length: 0
+            sources:
+                length: 0
+''')
 
-            {% snapshot ts_snapshot %}
-                {{ config(
-                    strategy='timestamp',
-                    unique_key='id',
-                    updated_at='some_date',
-                    target_database=database,
-                    target_schema=schema,
-                )}}
-                select * from {{ ref(var('seed_name', 'base')) }}
-            {% endsnapshot %}
-        '''
-    },
-    'facts': {
-        'seed': {
-            'length': 3,
-            'names': ['base', 'newcolumns', 'added'],
-        },
-        'snapshot': {
-            'length': 2,
-            'names': ['cc_snapshot', 'ts_snapshot'],
-        },
-        'base': {
-            'rowcount': 10,
-        },
-        'added': {
-            'rowcount': 20,
-        },
-        'newcolumns': {
-            'rowcount': 10,
-        },
-        'added_plus_ten': {
-            'rowcount': 30,
-        },
-        'added_plus_twenty': {
-            'rowcount': 40,
-        },
-    },
-}
+
+BASE_PROJECT = yaml.safe_load('''
+    name: base
+    paths:
+        data/base.csv: files.seeds.base
+        models/view.sql: files.models.base_view
+        models/table.sql: files.models.base_table
+        models/schema.yml: files.schemas.base
+    facts:
+        seed:
+            length: 1
+            names:
+                - base
+        run:
+            length: 2
+            names:
+                - view
+                - table
+        catalog:
+            nodes:
+                length: 3
+            sources:
+                length: 1
+        persisted_relations:
+            - base
+            - view
+            - table
+        base:
+            rowcount: 10
+''')
+
+
+EPHEMERAL_PROJECT = yaml.safe_load('''
+    name: ephemeral
+    paths:
+        data/base.csv: files.seeds.base
+        models/ephemeral.sql: files.models.ephemeral
+        models/view.sql: files.models.ephemeral_view
+        models/table.sql: files.models.ephemeral_table
+        models/schema.yml: files.schemas.base
+    facts:
+        seed:
+            length: 1
+            names:
+                - base
+        run:
+            length: 2
+            names:
+                - view
+                - table
+        catalog:
+            nodes:
+                length: 3
+            sources:
+                length: 1
+        persisted_relations:
+            - base
+            - view
+            - table
+        base:
+            rowcount: 10
+
+''')
+
+INCREMENTAL_PROJECT = yaml.safe_load('''
+    name: incremental
+    paths:
+        data/base.csv: files.seeds.base
+        data/extended.csv: files.seeds.added
+        models/incremental.sql: files.models.incremental
+        models/schema.yml: files.schemas.base
+    facts:
+        seed:
+            length: 2
+            names:
+                - base
+                - extended
+        run:
+            length: 1
+            names:
+                - incremental
+        catalog:
+            nodes:
+                length: 3
+            sources:
+                length: 1
+        persisted_relations:
+            - base
+            - extended
+            - incremental
+        base:
+            rowcount: 10
+        extended:
+            rowcount: 20
+''')
+
+SNAPSHOT_PROJECT = yaml.safe_load('''
+    name: snapshot
+    paths:
+        data/base.csv: files.seeds.base
+        data/newcolumns.csv: files.seeds.newcolumns
+        data/added.csv: files.seeds.added
+        snapshots/cc_snapshot.sql: files.snapshots.check_cols
+        snapshots/ts_snapshot.sql: files.snapshots.timestamp
+    facts:
+        seed:
+            length: 3
+            names:
+                - base
+                - newcolumns
+                - added
+        snapshot:
+            length: 2
+            names:
+                - cc_snapshot
+                - ts_snapshot
+        base:
+            rowcount: 10
+        added:
+            rowcount: 20
+        newcolumns:
+            rowcount: 10
+        added_plus_ten:
+            rowcount: 30
+        added_plus_twenty:
+            rowcount: 40
+''')
+
+
+DATA_TESTS_PROJECT = yaml.safe_load('''
+    name: data_tests
+    paths:
+        test/passing.sql: files.tests.passing
+        test/failing.sql: files.tests.failing
+    facts:
+        test:
+            length: 2
+            names:
+                - passing
+                - failing
+        persisted_relations: []
+''')
+
+
+SCHEMA_TESTS_PROJECT = yaml.safe_load('''
+    name: schema_tests
+    paths:
+        data/base.csv: files.seeds.base
+        data/schema.yml: files.schemas.test_seed
+        models/view.sql: files.models.base_view
+        models/table.sql: files.models.base_table
+        models/schema.yml: files.schemas.base
+        models/schema_view.yml: files.schemas.test_view
+        models/schema_table.yml: files.schemas.test_table
+    facts:
+        seed:
+            length: 1
+            names:
+                - base
+        run:
+            length: 2
+            names:
+                - view
+                - table
+        test:
+            length: 3
+        catalog:
+            nodes:
+                length: 3
+            sources:
+                length: 1
+        persisted_relations:
+            - base
+            - view
+            - table
+        base:
+            rowcount: 10
+''')
 
 
 DEFAULT_PROJECTS = {
@@ -381,6 +534,8 @@ DEFAULT_PROJECTS = {
         EPHEMERAL_PROJECT,
         INCREMENTAL_PROJECT,
         SNAPSHOT_PROJECT,
+        DATA_TESTS_PROJECT,
+        SCHEMA_TESTS_PROJECT,
     ]
 }
 
@@ -564,6 +719,34 @@ BUILTIN_TEST_SEQUENCES = {
           - type: relation_rows
             name: cc_snapshot
             length: fact.added_plus_twenty.rowcount
+    '''),
+    'data_test': yaml.safe_load('''
+        project: data_tests
+        sequence:
+            - type: dbt
+              cmd: test
+              check: false
+            - type: run_results
+              length: fact.test.length
+              names: fact.test.names
+              attributes:
+                passing.fail: false
+                failing.fail: true
+    '''),
+    'schema_test': yaml.safe_load('''
+        project: schema_tests
+        sequence:
+            - type: dbt
+              cmd: seed
+            - type: dbt
+              cmd: test -m base
+            - type: run_results
+              length: fact.seed.length
+            - type: dbt
+              cmd: run
+            - type: dbt
+              cmd: test
+              length: fact.test.length
     ''')
 }
 
@@ -587,7 +770,7 @@ class DbtSpecFile(pytest.File):
         }
 
         for project in raw.get('projects', []):
-            parsed = DbtProject.from_dict(project)
+            parsed = DbtProject.from_dict(project, projects)
             projects[parsed.name] = parsed
 
         try:
@@ -642,6 +825,7 @@ class DbtItem(pytest.Item):
         self.sequence = sequence
         self.project = project
         self.adapter = None
+        self.schema_relation = None
         start = datetime.utcnow().strftime('%y%m%d%H%M%S%f')
         randval = random.SystemRandom().randint(0, 999999)
         self.random_suffix = f'{start}{randval:06}'
@@ -684,16 +868,31 @@ class DbtItem(pytest.Item):
         adapter = FACTORY.lookup_adapter(config.credentials.type)
         return adapter
 
+    @staticmethod
+    def _get_from_dict(dct: Dict[str, Any], keypath: Iterable[str]):
+        value = dct
+        for key in keypath:
+            value = value[key]
+        return value
+
+    def _update_nested_dict(
+        dct: Dict[str, Any], keypath: Iterable[str], value: Any
+    ):
+        next_key, keypath = keypath[0], keypath[1:]
+        for cur_key in keypath:
+            if next_key not in dct:
+                dct[next_key] = {}
+            dct = dct[next_key]
+            next_key = cur_key
+        dct[next_key] = value
+
     def get_fact(self, key):
         if isinstance(key, str) and key.startswith('fact.'):
             parts = key.split('.')[1:]
-            facts = self.project.facts
-            for part in parts:
-                try:
-                    facts = facts[part]
-                except KeyError:
-                    return key
-            return facts
+            try:
+                return self._get_from_dict(self.project.facts, parts)
+            except KeyError:
+                pass
         return key
 
     def _relation_from_name(self, name: str):
@@ -766,9 +965,30 @@ class DbtItem(pytest.Item):
         cli_vars.update(self._base_vars())
         if cli_vars:
             full_cmd.extend(('--vars', yaml.safe_dump(cli_vars)))
-        result = run(full_cmd, check=True, capture_output=True)
+        should_check = sequence_item.get('check', True)
+        result = run(full_cmd, check=should_check, capture_output=True)
         print(result.stdout.decode('utf-8'))
         return result
+
+    @staticmethod
+    def _build_expected_attributes_dict(
+        values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # turn keys into nested dicts
+        attributes = {}
+        for key, value in values.items():
+            parts = key.split('.', 1)
+            if len(parts) != 2:
+                raise TestProcessingException(
+                    f'Expected a longer keypath, only got "{key}" '
+                    '(no attributes?)'
+                )
+            name, keypath = parts
+
+            if name not in attributes:
+                attributes[name] = {}
+            attributes[name][keypath] = value
+        return attributes
 
     def step_run_results(self, sequence_item, tmpdir):
         path = os.path.join(tmpdir, 'project', 'target', 'run_results.json')
@@ -815,6 +1035,28 @@ class DbtItem(pytest.Item):
                 raise DBTException(
                     f'Nodes missing from run_results: {list(expected_names)}'
                 )
+        if 'attributes' in sequence_item:
+            values = self.get_fact(sequence_item['attributes'])
+
+            attributes = self._build_expected_attributes_dict(values)
+
+            for result in results:
+                try:
+                    node = result['node']
+                    name = node['name']
+                except KeyError as exc:
+                    raise DBTException(
+                        f'Invalid result, missing required key {exc}'
+                    ) from None
+
+                if name in attributes:
+                    for key, value in attributes[name].items():
+                        try:
+                            self._get_from_dict(result, key.split('.'))
+                        except KeyError as exc:
+                            raise DBTException(
+                                f'Invalid result, missing required key {exc}'
+                            ) from None
 
     def _expected_catalog_member(self, sequence_item, catalog, member_name):
         if member_name not in catalog:
@@ -1065,8 +1307,19 @@ class DbtItem(pytest.Item):
             self.project.write(tmpdir)
             self.adapter = self._get_adapter(tmpdir)
 
-            for idx, test_item in enumerate(self.sequence):
-                self.run_test_item(idx, test_item, tmpdir)
+            self.schema_relation = self.adapter.Relation.create(
+                database=self.adapter.config.credentials.database,
+                schema=self.adapter.config.credentials.schema,
+                quote_policy=self.adapter.config.quoting,
+            )
+
+            try:
+                for idx, test_item in enumerate(self.sequence):
+                    self.run_test_item(idx, test_item, tmpdir)
+            finally:
+                with self.adapter.connection_named('__test'):
+                    if self.config.getoption('drop_schema'):
+                        self.adapter.drop_schema(self.schema_relation)
 
         return True
 
