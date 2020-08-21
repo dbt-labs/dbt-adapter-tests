@@ -488,6 +488,38 @@ class DbtItem(pytest.Item):
                 f'Unknown clause type in update_rows: {clause_type}'
             )
 
+    def step_relation_types(self, sequence_item):
+        """
+        type: relation_types
+        expect:
+            foo: view
+            bar: table
+        """
+        if 'expect' not in sequence_item:
+            raise TestProcessingException('Invalid relation_types: no expect')
+        expected = self.get_fact(sequence_item['expect'])
+
+        expected_relation_values = {}
+        found_relations = []
+        schemas = set()
+
+        for key, value in expected.items():
+            relation = self._relation_from_name(key)
+            expected_relation_values[relation] = value
+            schemas.update(relation.without_identifier())
+        with self.adapter.connection_named('__test'):
+            for schema in schemas:
+                found_relations.extend(self.adapter.list_relations_without_caching(schema))
+
+        for key, value in expected.items():
+            for relation in found_relations:
+                # this might be too broad
+                if relation.identifier == key:
+                    assert relation.type == value, (
+                        f'Got an unexpected relation type of {relation.type} '
+                        f'for relation {key}, expected {value}'
+                    )
+
     def step_update_rows(self, sequence_item):
         """
             type: update_rows
@@ -569,6 +601,8 @@ class DbtItem(pytest.Item):
                 self.step_relation_rows(test_item)
             elif item_type == 'update_rows':
                 self.step_update_rows(test_item)
+            elif item_type == 'relation_types':
+                self.step_relation_types(test_item)
             else:
                 raise TestProcessingException(
                     f'Unknown item type {item_type}'

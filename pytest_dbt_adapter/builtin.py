@@ -314,6 +314,10 @@ KNOWN_FILES = {
         'added': NAMES_EXTENDED,
     },
     'models': {
+        'base_materialized_var': """
+            {{ config(materialized=var("materialized_var", "table"))}}
+            select * from {{ source('raw', 'seed') }}
+        """,
         'base_table': {
             'materialized': 'table',
             'body': "select * from {{ source('raw', 'seed') }}",
@@ -369,6 +373,7 @@ KNOWN_FILES = {
 THIS_DIR = Path(__file__).parent
 PROJECT_DIR = THIS_DIR / 'projects'
 SEQUENCE_DIR = THIS_DIR / 'sequences'
+
 
 def _get_named_yaml_dicts(path: Path) -> Dict[str, Dict[str, Any]]:
     result = {}

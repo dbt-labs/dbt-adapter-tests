@@ -9,6 +9,8 @@ sequence:
     cmd: run
   - type: run_results
     length: fact.run.length
+  - type: relation_types
+    expect: fact.expected_types_table
   - type: relation_rows
     name: base
     length: fact.base.rowcount
@@ -22,3 +24,21 @@ sequence:
       length: fact.catalog.nodes.length
     sources:
       length: fact.catalog.sources.length
+  # now swap
+  - type: dbt
+    cmd: run -m swappable
+    vars:
+      materialized_var: view
+  - type: run_results
+    length: 1
+  - type: relation_types
+    expect: fact.expected_types_view
+  # now incremental
+  - type: dbt
+    cmd: run -m swappable
+    vars:
+      materialized_var: incremental
+  - type: run_results
+    length: 1
+  - type: relation_types
+    expect: fact.expected_types_table

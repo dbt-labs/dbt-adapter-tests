@@ -19,8 +19,8 @@ projects:
         rowcount: 10
       extended:
         rowcount: 20
-  - overrides: snapshot
-    dbt_project_yml:
+  - overrides: snapshot_strategy_check_cols
+    dbt_project_yml: &file_format_delta
       # we're going to UPDATE the seed tables as part of testing, so we must make them delta format
       seeds:
         dbt_test_project:
@@ -28,6 +28,8 @@ projects:
       snapshots:
         dbt_test_project:
           file_format: delta
+  - overrides: snapshot_strategy_timestamp
+    dbt_project_yml: *file_format_delta
 sequences:
   test_dbt_empty: empty
   test_dbt_base: base
