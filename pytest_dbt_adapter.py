@@ -244,13 +244,30 @@ models:
 
 
 TEST_PASSING_DATA_TEST = """
-select 1 as id limit 0
+select 1 as id where id = 2
 """
 
 TEST_FAILING_DATA_TEST = """
-select 1 as id
+select 1 as id where id = 1
 """
 
+
+TEST_EPHEMERAL_DATA_TEST_PASSING = '''
+with my_other_cool_cte as (
+    select id, name from {{ ref('ephemeral') }}
+    where id > 1000
+)
+select name, id from my_other_cool_cte
+'''
+
+
+TEST_EPHEMERAL_DATA_TEST_FAILING = '''
+with my_other_cool_cte as (
+    select id, name from {{ ref('ephemeral') }}
+    where id < 1000
+)
+select name, id from my_other_cool_cte
+'''
 
 INCREMENTAL_MODEL = """
 select * from {{ source('raw', 'seed') }}
@@ -284,6 +301,15 @@ TS_SNAPSHOT_SQL = '''
 {% endsnapshot %}
 '''.strip()
 
+
+EPHEMERAL_WITH_CTE = """
+with my_cool_cte as (
+  select name, id from {{ ref('base') }}
+)
+select id, name from my_cool_cte where id is not null
+"""
+
+
 KNOWN_FILES = {
     'seeds': {
         'base': NAMES_BASE,
@@ -302,6 +328,10 @@ KNOWN_FILES = {
         'ephemeral': {
             'materialized': 'ephemeral',
             'body': "select * from {{ source('raw', 'seed') }}",
+        },
+        'ephemeral_with_cte': {
+            'materialized': 'ephemeral',
+            'body': EPHEMERAL_WITH_CTE,
         },
         'ephemeral_view': {
             'materialized': 'view',
@@ -323,6 +353,10 @@ KNOWN_FILES = {
     'tests': {
         'passing': TEST_PASSING_DATA_TEST,
         'failing': TEST_FAILING_DATA_TEST,
+        'ephemeral': {
+            'passing': TEST_EPHEMERAL_DATA_TEST_PASSING,
+            'failing': TEST_EPHEMERAL_DATA_TEST_FAILING,
+        }
     },
     'schemas': {
         'base': SEED_SOURCE_YML,
@@ -487,7 +521,33 @@ DATA_TESTS_PROJECT = yaml.safe_load('''
             names:
                 - passing
                 - failing
-        persisted_relations: []
+''')
+
+DATA_TEST_EPHEMERALS_PROJECT = yaml.safe_load('''
+    name: data_test_ephemeral_models
+    paths:
+        data/base.csv: files.seeds.base
+        models/ephemeral.sql: files.models.ephemeral_with_cte
+        models/passing_model.sql: files.tests.ephemeral.passing
+        models/failing_model.sql: files.tests.ephemeral.failing
+        models/schema.yml: files.schemas.base
+        test/passing.sql: files.tests.ephemeral.passing
+        test/failing.sql: files.tests.ephemeral.failing
+    facts:
+        seed:
+            length: 1
+            names:
+                - base
+        run:
+            length: 2
+            names:
+                - passing_model
+                - failing_model
+        test:
+            length: 2
+            names:
+                - passing
+                - failing
 ''')
 
 
@@ -536,6 +596,7 @@ DEFAULT_PROJECTS = {
         SNAPSHOT_PROJECT,
         DATA_TESTS_PROJECT,
         SCHEMA_TESTS_PROJECT,
+        DATA_TEST_EPHEMERALS_PROJECT,
     ]
 }
 
@@ -732,6 +793,29 @@ BUILTIN_TEST_SEQUENCES = {
               attributes:
                 passing.fail: false
                 failing.fail: true
+    '''),
+    'data_test_ephemeral_models': yaml.safe_load('''
+        project: data_test_ephemeral_models
+        sequence:
+            - type: dbt
+              cmd: seed
+            - type: run_results
+              length: fact.seed.length
+            - type: dbt
+              cmd: test
+              check: false
+            - type: run_results
+              length: fact.test.length
+              names: fact.test.names
+              attributes:
+                passing.fail: false
+                failing.fail: true
+            - type: dbt
+              cmd: run
+            - type: run_results
+              length: fact.run.length
+              names: fact.run.names
+
     '''),
     'schema_test': yaml.safe_load('''
         project: schema_tests
@@ -965,9 +1049,21 @@ class DbtItem(pytest.Item):
         cli_vars.update(self._base_vars())
         if cli_vars:
             full_cmd.extend(('--vars', yaml.safe_dump(cli_vars)))
-        should_check = sequence_item.get('check', True)
-        result = run(full_cmd, check=should_check, capture_output=True)
+        expect_passes = sequence_item.get('check', True)
+        result = run(full_cmd, check=False, capture_output=True)
         print(result.stdout.decode('utf-8'))
+        if expect_passes:
+            if result.returncode != 0:
+                raise TestProcessingException(
+                    f'Command {full_cmd} failed, expected pass! Got '
+                    f'rc={result.returncode}'
+                )
+        else:
+            if result.returncode == 0:
+                raise TestProcessingException(
+                    f'Command {full_cmd} passed, expected failure! Got '
+                    f'rc={result.returncode}'
+                )
         return result
 
     @staticmethod
