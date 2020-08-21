@@ -1,0 +1,27 @@
+name: snapshot_strategy_timestamp
+paths:
+    data/base.csv: files.seeds.base
+    data/newcolumns.csv: files.seeds.newcolumns
+    data/added.csv: files.seeds.added
+    snapshots/ts_snapshot.sql: files.snapshots.timestamp
+facts:
+    seed:
+        length: 3
+        names:
+            - base
+            - newcolumns
+            - added
+    snapshot:
+        length: 1
+        names:
+            - ts_snapshot
+    base:
+        rowcount: 10
+    added:
+        rowcount: 20
+    newcolumns:
+        rowcount: 10
+    added_plus_ten:
+        rowcount: 30
+    added_plus_twenty:
+        rowcount: 40

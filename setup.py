@@ -3,16 +3,12 @@ from setuptools import setup
 
 setup(
     name='pytest-dbt-adapter',
-    modules=['pytest_dbt_adapter'],
+    packages=['pytest_dbt_adapter'],
     version='0.1',
     package_data={
         'pytest_dbt_adapter': [
-            'basic_crud_tests/dbt_project.yml',
-            'basic_crud_tests/data/*.csv',
-            'basic_crud_tests/macros/*.sql',
-            'basic_crud_tests/models/*/*.sql',
-            'basic_crud_tests/models/*.yml',
-            'empty_project/dbt_project.yml',
+            'projects/*.yml',
+            'sequences/*.yml',
         ]
     },
     entry_points={

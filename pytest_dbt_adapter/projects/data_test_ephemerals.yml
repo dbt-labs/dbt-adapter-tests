@@ -1,0 +1,24 @@
+name: data_test_ephemeral_models
+paths:
+    data/base.csv: files.seeds.base
+    models/ephemeral.sql: files.models.ephemeral_with_cte
+    models/passing_model.sql: files.tests.ephemeral.passing
+    models/failing_model.sql: files.tests.ephemeral.failing
+    models/schema.yml: files.schemas.base
+    test/passing.sql: files.tests.ephemeral.passing
+    test/failing.sql: files.tests.ephemeral.failing
+facts:
+    seed:
+        length: 1
+        names:
+            - base
+    run:
+        length: 2
+        names:
+            - passing_model
+            - failing_model
+    test:
+        length: 2
+        names:
+            - passing
+            - failing
