@@ -2,8 +2,8 @@ name: schema_tests
 paths:
     data/base.csv: files.seeds.base
     data/schema.yml: files.schemas.test_seed
-    models/view.sql: files.models.base_view
-    models/table.sql: files.models.base_table
+    models/view_model.sql: files.models.base_view
+    models/table_model.sql: files.models.base_table
     models/schema.yml: files.schemas.base
     models/schema_view.yml: files.schemas.test_view
     models/schema_table.yml: files.schemas.test_table
@@ -15,8 +15,8 @@ facts:
     run:
         length: 2
         names:
-            - view
-            - table
+            - view_model
+            - table_model
     test:
         length: 3
     catalog:
@@ -26,7 +26,7 @@ facts:
             length: 1
     persisted_relations:
         - base
-        - view
-        - table
+        - view_model
+        - table_model
     base:
         rowcount: 10
