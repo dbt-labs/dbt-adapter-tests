@@ -1,0 +1,14 @@
+name: schema_test
+project: schema_tests
+sequence:
+    - type: dbt
+      cmd: seed
+    - type: dbt
+      cmd: test -m base
+    - type: run_results
+      length: fact.seed.length
+    - type: dbt
+      cmd: run
+    - type: dbt
+      cmd: test
+      length: fact.test.length

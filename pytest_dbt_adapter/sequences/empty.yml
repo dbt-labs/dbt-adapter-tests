@@ -1,0 +1,23 @@
+name: empty
+project: empty
+sequence:
+  - type: dbt
+    cmd: seed
+  - type: run_results
+    exists: False
+  - type: dbt
+    cmd: run
+  - type: run_results
+    exists: False
+  - type: catalog
+    exists: False
+  - type: dbt
+    cmd: docs generate
+  - type: run_results
+    exists: False
+  - type: catalog
+    exists: True
+    nodes:
+      length: fact.catalog.nodes.length
+    sources:
+      length: fact.catalog.sources.length

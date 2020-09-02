@@ -1,0 +1,10 @@
+name: data_tests
+paths:
+    test/passing.sql: files.tests.passing
+    test/failing.sql: files.tests.failing
+facts:
+    test:
+        length: 2
+        names:
+            - passing
+            - failing

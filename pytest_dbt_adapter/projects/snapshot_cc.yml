@@ -1,0 +1,31 @@
+name: snapshot_strategy_check_cols
+paths:
+    data/base.csv: files.seeds.base
+    data/newcolumns.csv: files.seeds.newcolumns
+    data/added.csv: files.seeds.added
+    snapshots/cc_all_snapshot.sql: files.snapshots.check_cols_all
+    snapshots/cc_date_snapshot.sql: files.snapshots.check_cols_date
+    snapshots/cc_name_snapshot.sql: files.snapshots.check_cols_name
+facts:
+    seed:
+        length: 3
+        names:
+            - base
+            - newcolumns
+            - added
+    snapshot:
+        length: 3
+        names:
+            - cc_all_snapshot
+            - cc_name_snapshot
+            - cc_date_snapshot
+    base:
+        rowcount: 10
+    added:
+        rowcount: 20
+    newcolumns:
+        rowcount: 10
+    added_plus_ten:
+        rowcount: 30
+    added_plus_twenty:
+        rowcount: 40

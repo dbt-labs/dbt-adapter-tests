@@ -1,0 +1,76 @@
+name: snapshot_strategy_check_cols
+project: snapshot_strategy_check_cols
+sequence:
+  - type: dbt
+    cmd: seed
+  - type: run_results
+    length: fact.seed.length
+  - type: dbt
+    cmd: snapshot
+  - type: relation_rows
+    name: cc_all_snapshot
+    length: fact.base.rowcount
+  - type: relation_rows
+    name: cc_name_snapshot
+    length: fact.base.rowcount
+  - type: relation_rows
+    name: cc_date_snapshot
+    length: fact.base.rowcount
+ # point at the "added" seed so the snapshot sees 10 new rows
+  - type: dbt
+    cmd: snapshot
+    vars:
+      seed_name: added
+  - type: relation_rows
+    name: cc_all_snapshot
+    length: fact.added.rowcount
+  - type: relation_rows
+    name: cc_name_snapshot
+    length: fact.added.rowcount
+  - type: relation_rows
+    name: cc_date_snapshot
+    length: fact.added.rowcount
+ # update some timestamps in the "added" seed so the snapshot sees 10 more new rows
+  - type: update_rows
+    name: added
+    dst_col: some_date
+    clause:
+      src_col: some_date
+      type: add_timestamp
+    where: id > 10 and id < 21
+  - type: dbt
+    cmd: snapshot
+    vars:
+      seed_name: added
+  - type: relation_rows
+    name: cc_all_snapshot
+    length: fact.added_plus_ten.rowcount
+  - type: relation_rows
+  # unchanged: only the timestamp changed
+    name: cc_name_snapshot
+    length: fact.added.rowcount
+  - type: relation_rows
+    name: cc_date_snapshot
+    length: fact.added_plus_ten.rowcount
+  - type: update_rows
+    name: added
+    dst_col: name
+    clause:
+      src_col: name
+      type: add_string
+      value: _updated
+    where: id < 11
+  - type: dbt
+    cmd: snapshot
+    vars:
+      seed_name: added
+  - type: relation_rows
+    name: cc_all_snapshot
+    length: fact.added_plus_twenty.rowcount
+  - type: relation_rows
+    name: cc_name_snapshot
+    length: fact.added_plus_ten.rowcount
+  # does not see name updates
+  - type: relation_rows
+    name: cc_date_snapshot
+    length: fact.added_plus_ten.rowcount

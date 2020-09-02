@@ -1,0 +1,11 @@
+name: empty
+facts:
+    seed:
+        length: 0
+    run:
+        length: 0
+    catalog:
+        nodes:
+            length: 0
+        sources:
+            length: 0

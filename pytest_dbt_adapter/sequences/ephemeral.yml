@@ -1,0 +1,24 @@
+name: ephemeral
+project: ephemeral
+sequence:
+  - type: dbt
+    cmd: seed
+  - type: run_results
+    length: fact.seed.length
+  - type: dbt
+    cmd: run
+  - type: run_results
+    length: fact.run.length
+  - type: relation_rows
+    name: base
+    length: fact.base.rowcount
+  - type: relations_equal
+    relations: fact.persisted_relations
+  - type: dbt
+    cmd: docs generate
+  - type: catalog
+    exists: True
+    nodes:
+      length: fact.catalog.nodes.length
+    sources:
+      length: fact.catalog.sources.length

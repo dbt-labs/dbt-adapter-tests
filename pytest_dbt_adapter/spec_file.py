@@ -6,432 +6,18 @@ import tempfile
 from datetime import datetime
 from itertools import chain, repeat
 from subprocess import run, CalledProcessError
-from typing import Dict, Any
+from typing import Dict, Any, Iterable
 
 import pytest
 import yaml
 
+from .exceptions import TestProcessingException, DBTException
+from .builtin import BUILTIN_TEST_SEQUENCES, DEFAULT_PROJECTS, DbtProject
+
+
 from dbt.adapters.factory import FACTORY
 from dbt.config import RuntimeConfig
 from dbt.main import parse_args
-
-
-# custom test loader
-def pytest_collect_file(parent, path):
-    if path.ext == ".dbtspec":  # and path.basename.startswith("test"):
-        return DbtSpecFile.from_parent(parent, fspath=path)
-
-
-DEFAULT_DBT_PROJECT = {
-    'name': 'dbt_test_project',
-    'config-version': 2,
-    'version': '1.0.0',
-}
-
-
-NAMES_BASE = """
-id,name,some_date
-1,Easton,1981-05-20T06:46:51
-2,Lillian,1978-09-03T18:10:33
-3,Jeremiah,1982-03-11T03:59:51
-4,Nolan,1976-05-06T20:21:35
-5,Hannah,1982-06-23T05:41:26
-6,Eleanor,1991-08-10T23:12:21
-7,Lily,1971-03-29T14:58:02
-8,Jonathan,1988-02-26T02:55:24
-9,Adrian,1994-02-09T13:14:23
-10,Nora,1976-03-01T16:51:39
-""".lstrip()
-
-
-NAMES_EXTENDED = NAMES_BASE + """
-11,Mateo,2014-09-07T17:04:27
-12,Julian,2000-02-04T11:48:30
-13,Gabriel,2001-07-10T07:32:52
-14,Isaac,2002-11-24T03:22:28
-15,Levi,2009-11-15T11:57:15
-16,Elizabeth,2005-04-09T03:50:11
-17,Grayson,2019-08-06T19:28:17
-18,Dylan,2014-03-01T11:50:41
-19,Jayden,2009-06-06T07:12:49
-20,Luke,2003-12-05T21:42:18
-""".lstrip()
-
-
-class Model:
-    def __init__(self, config, body):
-        self.config = config
-        self.body = body
-
-    @classmethod
-    def from_dict(cls, dct):
-        try:
-            config = dct.get('config', {})
-            if 'materialized' in dct:
-                config['materialized'] = dct['materialized']
-            return cls(config=config, body=dct['body'])
-        except KeyError as exc:
-            raise TestProcessingException(
-                f'Invalid test, model is missing key {exc}'
-            )
-
-    def config_params(self):
-        if not self.config:
-            return ''
-        else:
-            pairs = ', '.join(
-                '{!s}={!r}'.format(key, value)
-                for key, value in self.config.items()
-            )
-            return '{{ config(' + pairs + ') }}'
-
-    def render(self):
-        return '\n'.join([self.config_params(), self.body])
-
-
-class DbtProject:
-    def __init__(
-        self,
-        name: str,
-        dbt_project_yml: str,
-        paths: Dict[str, str],
-        facts: Dict[str, Any]
-    ):
-        self.name = name
-        self.dbt_project_yml = dbt_project_yml
-        self.paths = paths
-        self.facts = facts
-
-    def write(self, path: str):
-        project_path = os.path.join(path, 'project')
-        os.makedirs(project_path)
-        with open(os.path.join(project_path, 'dbt_project.yml'), 'w') as fp:
-            fp.write(yaml.safe_dump(self.dbt_project_yml))
-
-        for relpath, contents in self.paths.items():
-            fullpath = os.path.join(project_path, relpath)
-            os.makedirs(os.path.dirname(fullpath), exist_ok=True)
-
-            if relpath.startswith('models/') and relpath.endswith('.sql'):
-                if isinstance(contents, dict):
-                    model = Model.from_dict(contents)
-                    contents = model.render()
-            if not isinstance(contents, str):
-                raise TestProcessingException(f'{contents} is not a string')
-
-            with open(fullpath, 'w') as fp:
-                fp.write(contents)
-
-    @classmethod
-    def from_dict(cls, dct):
-        dbt_project_yml = DEFAULT_DBT_PROJECT.copy()
-        dbt_project_yml.update(dct.get('dbt_project_yml', {}))
-
-        paths: Dict[str, str] = dct.get('paths', {})
-        facts: Dict[str, Any] = dct.get('facts', {})
-        try:
-            name = dct['name']
-        except KeyError:
-            raise TestProcessingException(
-                f'Invalid project definition, no name in {dct}'
-            ) from None
-        return cls(
-            name=name,
-            dbt_project_yml=dbt_project_yml,
-            paths=paths,
-            facts=facts,
-        )
-
-
-SEED_SOURCE_YML = """
-version: 2
-sources:
-  - name: raw
-    schema: "{{ target.schema }}"
-    tables:
-      - name: seed
-        identifier: "{{ var('seed_name', 'base') }}"
-"""
-
-
-EMPTY_PROJECT = {
-    'name': 'empty',
-    'facts': {
-        'seed': {
-            'length': 0,
-        },
-        'run': {
-            'length': 0,
-        },
-        'catalog': {
-            'nodes': {
-                'length': 0,
-            },
-            'sources': {
-                'length': 0,
-            },
-        },
-    },
-}
-
-BASE_PROJECT = {
-    'name': 'base',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'models/view.sql': {
-            'materialized': 'view',
-            'body': "select * from {{ source('raw', 'seed') }}",
-        },
-        'models/table.sql': {
-            'materialized': 'table',
-            'body': "select * from {{ source('raw', 'seed') }}",
-        },
-        'models/schema.yml': SEED_SOURCE_YML,
-    },
-    'facts': {
-        'seed': {
-            'length': 1,
-            'names': ['base'],
-            'rowcount': 10,
-        },
-        'run': {
-            'length': 2,
-            'names': ['view', 'table'],
-        },
-        'catalog': {
-            'nodes': {
-                'length': 3,
-            },
-            'sources': {
-                'length': 1,
-            },
-        },
-        'persisted_relations': ['base', 'view', 'table'],
-        'base': {
-            'rowcount': 10,
-        },
-    },
-}
-
-
-EPHEMERAL_PROJECT = {
-    'name': 'ephemeral',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'models/ephemeral.sql': {
-            'materialized': 'ephemeral',
-            'body': "select * from {{ source('raw', 'seed') }}",
-        },
-        'models/view.sql': {
-            'materialized': 'view',
-            'body': "select * from {{ ref('ephemeral') }}",
-        },
-        'models/table.sql': {
-            'materialized': 'table',
-            'body': "select * from {{ ref('ephemeral') }}",
-        },
-        'models/schema.yml': SEED_SOURCE_YML,
-    },
-    'facts': {
-        'seed': {
-            'length': 1,
-            'names': ['base'],
-        },
-        'run': {
-            'length': 2,
-            'names': ['view', 'table'],
-        },
-        'catalog': {
-            'nodes': {
-                'length': 3,
-            },
-            'sources': {
-                'length': 1,
-            },
-        },
-        'persisted_relations': ['base', 'view', 'table'],
-        'base': {
-            'rowcount': 10,
-        },
-    },
-}
-
-
-INCREMENTAL_MODEL = """
-select * from {{ source('raw', 'seed') }}
-{% if is_incremental() %}
-where id > (select max(id) from {{ this }})
-{% endif %}
-""".strip()
-
-
-INCREMENTAL_PROJECT = {
-    'name': 'incremental',
-    'paths': {
-        'data/base.csv': NAMES_BASE,
-        'data/extended.csv': NAMES_EXTENDED,
-        'models/incremental.sql': {
-            'materialized': 'incremental',
-            'body': INCREMENTAL_MODEL,
-        },
-        'models/schema.yml': SEED_SOURCE_YML,
-    },
-    'facts': {
-        'seed': {
-            'length': 2,
-            'names': ['base', 'extended'],
-        },
-        'run': {
-            'length': 1,
-            'names': ['incremental'],
-        },
-        'catalog': {
-            'nodes': {
-                'length': 3,
-            },
-            'sources': {
-                'length': 1,
-            },
-        },
-        'persisted_relations': ['base', 'extended', 'incremental'],
-        'base': {
-            'rowcount': 10,
-        },
-        'extended': {
-            'rowcount': 20,
-        },
-    },
-}
-
-
-DEFAULT_PROJECTS = {
-    p['name']: p for p in [
-        EMPTY_PROJECT,
-        BASE_PROJECT,
-        EPHEMERAL_PROJECT,
-        INCREMENTAL_PROJECT,
-    ]
-}
-
-
-BUILTIN_TEST_SEQUENCES = {
-    'empty': yaml.safe_load('''
-        project: empty
-        sequence:
-          - type: dbt
-            cmd: seed
-          - type: run_results
-            exists: False
-          - type: dbt
-            cmd: run
-          - type: run_results
-            exists: False
-          - type: catalog
-            exists: False
-          - type: dbt
-            cmd: docs generate
-          - type: run_results
-            exists: False
-          - type: catalog
-            exists: True
-            nodes:
-              length: fact.catalog.nodes.length
-            sources:
-              length: fact.catalog.sources.length
-        '''),
-    'base': yaml.safe_load('''
-        project: base
-        sequence:
-          - type: dbt
-            cmd: seed
-          - type: run_results
-            length: fact.seed.length
-          - type: dbt
-            cmd: run
-          - type: run_results
-            length: fact.run.length
-          - type: relation_rows
-            name: base
-            length: fact.base.rowcount
-          - type: relations_equal
-            relations: fact.persisted_relations
-          - type: dbt
-            cmd: docs generate
-          - type: catalog
-            exists: True
-            nodes:
-              length: fact.catalog.nodes.length
-            sources:
-              length: fact.catalog.sources.length
-        '''),
-    'ephemeral': yaml.safe_load('''
-        project: ephemeral
-        sequence:
-          - type: dbt
-            cmd: seed
-          - type: run_results
-            length: fact.seed.length
-          - type: dbt
-            cmd: run
-          - type: run_results
-            length: fact.run.length
-          - type: relation_rows
-            name: base
-            length: fact.base.rowcount
-          - type: relations_equal
-            relations: fact.persisted_relations
-          - type: dbt
-            cmd: docs generate
-          - type: catalog
-            exists: True
-            nodes:
-              length: fact.catalog.nodes.length
-            sources:
-              length: fact.catalog.sources.length
-        '''),
-    'incremental': yaml.safe_load('''
-        project: incremental
-        sequence:
-          - type: dbt
-            cmd: seed
-          - type: run_results
-            length: fact.seed.length
-          - type: dbt
-            cmd: run
-            vars:
-              seed_name: base
-          - type: relation_rows
-            name: base
-            length: fact.base.rowcount
-          - type: run_results
-            length: fact.run.length
-          - type: relations_equal
-            relations:
-              - base
-              - incremental
-          - type: dbt
-            cmd: run
-            vars:
-              seed_name: extended
-          - type: relation_rows
-            name: extended
-            length: fact.extended.rowcount
-          - type: run_results
-            length: fact.run.length
-          - type: relations_equal
-            relations:
-              - extended
-              - incremental
-          - type: dbt
-            cmd: docs generate
-          - type: catalog
-            exists: True
-            nodes:
-              length: fact.catalog.nodes.length
-            sources:
-              length: fact.catalog.sources.length
-    '''),
-}
 
 
 class DbtSpecFile(pytest.File):
@@ -453,7 +39,7 @@ class DbtSpecFile(pytest.File):
         }
 
         for project in raw.get('projects', []):
-            parsed = DbtProject.from_dict(project)
+            parsed = DbtProject.from_dict(project, projects)
             projects[parsed.name] = parsed
 
         try:
@@ -508,6 +94,7 @@ class DbtItem(pytest.Item):
         self.sequence = sequence
         self.project = project
         self.adapter = None
+        self.schema_relation = None
         start = datetime.utcnow().strftime('%y%m%d%H%M%S%f')
         randval = random.SystemRandom().randint(0, 999999)
         self.random_suffix = f'{start}{randval:06}'
@@ -550,16 +137,31 @@ class DbtItem(pytest.Item):
         adapter = FACTORY.lookup_adapter(config.credentials.type)
         return adapter
 
+    @staticmethod
+    def _get_from_dict(dct: Dict[str, Any], keypath: Iterable[str]):
+        value = dct
+        for key in keypath:
+            value = value[key]
+        return value
+
+    def _update_nested_dict(
+        dct: Dict[str, Any], keypath: Iterable[str], value: Any
+    ):
+        next_key, keypath = keypath[0], keypath[1:]
+        for cur_key in keypath:
+            if next_key not in dct:
+                dct[next_key] = {}
+            dct = dct[next_key]
+            next_key = cur_key
+        dct[next_key] = value
+
     def get_fact(self, key):
         if isinstance(key, str) and key.startswith('fact.'):
             parts = key.split('.')[1:]
-            facts = self.project.facts
-            for part in parts:
-                try:
-                    facts = facts[part]
-                except KeyError:
-                    return key
-            return facts
+            try:
+                return self._get_from_dict(self.project.facts, parts)
+            except KeyError:
+                pass
         return key
 
     def _relation_from_name(self, name: str):
@@ -613,20 +215,61 @@ class DbtItem(pytest.Item):
                 f'Got item type cmd, but no cmd in {sequence_item}'
             )
         cmd = shlex.split(sequence_item['cmd'])
+        partial_parse = sequence_item.get('partial_parse', False)
         extra = [
             '--target', 'default',
             '--profile', 'dbt-pytest',
             '--profiles-dir', tmpdir,
             '--project-dir', os.path.join(tmpdir, 'project')
         ]
-        full_cmd = ['dbt', '--debug'] + cmd + extra
+        base_cmd = ['dbt', '--debug']
+
+        if partial_parse:
+            base_cmd.append('--partial-parse')
+        else:
+            base_cmd.append('--no-partial-parse')
+
+        full_cmd = base_cmd + cmd + extra
         cli_vars = sequence_item.get('vars', {}).copy()
         cli_vars.update(self._base_vars())
         if cli_vars:
             full_cmd.extend(('--vars', yaml.safe_dump(cli_vars)))
-        result = run(full_cmd, check=True, capture_output=True)
+        expect_passes = sequence_item.get('check', True)
+        result = run(full_cmd, check=False, capture_output=True)
         print(result.stdout.decode('utf-8'))
+        if expect_passes:
+            if result.returncode != 0:
+                raise TestProcessingException(
+                    f'Command {full_cmd} failed, expected pass! Got '
+                    f'rc={result.returncode}'
+                )
+        else:
+            if result.returncode == 0:
+                raise TestProcessingException(
+                    f'Command {full_cmd} passed, expected failure! Got '
+                    f'rc={result.returncode}'
+                )
         return result
+
+    @staticmethod
+    def _build_expected_attributes_dict(
+        values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # turn keys into nested dicts
+        attributes = {}
+        for key, value in values.items():
+            parts = key.split('.', 1)
+            if len(parts) != 2:
+                raise TestProcessingException(
+                    f'Expected a longer keypath, only got "{key}" '
+                    '(no attributes?)'
+                )
+            name, keypath = parts
+
+            if name not in attributes:
+                attributes[name] = {}
+            attributes[name][keypath] = value
+        return attributes
 
     def step_run_results(self, sequence_item, tmpdir):
         path = os.path.join(tmpdir, 'project', 'target', 'run_results.json')
@@ -673,6 +316,28 @@ class DbtItem(pytest.Item):
                 raise DBTException(
                     f'Nodes missing from run_results: {list(expected_names)}'
                 )
+        if 'attributes' in sequence_item:
+            values = self.get_fact(sequence_item['attributes'])
+
+            attributes = self._build_expected_attributes_dict(values)
+
+            for result in results:
+                try:
+                    node = result['node']
+                    name = node['name']
+                except KeyError as exc:
+                    raise DBTException(
+                        f'Invalid result, missing required key {exc}'
+                    ) from None
+
+                if name in attributes:
+                    for key, value in attributes[name].items():
+                        try:
+                            self._get_from_dict(result, key.split('.'))
+                        except KeyError as exc:
+                            raise DBTException(
+                                f'Invalid result, missing required key {exc}'
+                            ) from None
 
     def _expected_catalog_member(self, sequence_item, catalog, member_name):
         if member_name not in catalog:
@@ -774,8 +439,126 @@ class DbtItem(pytest.Item):
                 f'select count(*) as num_rows from {relation}',
                 fetch=True
             )
-        assert len(tbl) == 1 and len(tbl[0]) == 1
-        assert tbl[0][0] == length
+
+        assert len(tbl) == 1 and len(tbl[0]) == 1, \
+            'count did not return 1 row with 1 column'
+        assert tbl[0][0] == length, \
+            f'expected {name} to have {length} rows, but it has {tbl[0][0]}'
+
+    def _generate_update_clause(self, clause) -> str:
+        if 'type' not in clause:
+            raise TestProcessingException(
+                'invalid update_rows clause: no type'
+            )
+        clause_type = clause['type']
+
+        if clause_type == 'add_timestamp':
+            if 'src_col' not in clause:
+                raise TestProcessingException(
+                    'Invalid update_rows clause: no src_col'
+                )
+            add_to = self.get_fact(clause['src_col'])
+            kwargs = {
+                k: self.get_fact(v) for k, v in clause.items()
+                if k in ('interval', 'number')
+            }
+            with self.adapter.connection_named('_test'):
+                return self.adapter.timestamp_add_sql(
+                    add_to=add_to,
+                    **kwargs
+                )
+        elif clause_type == 'add_string':
+            if 'src_col' not in clause:
+                raise TestProcessingException(
+                    'Invalid update_rows clause: no src_col'
+                )
+            if 'value' not in clause:
+                raise TestProcessingException(
+                    'Invalid update_rows clause: no value'
+                )
+            src_col = self.get_fact(clause['src_col'])
+            value = self.get_fact(clause['value'])
+            location = clause.get('location', 'append')
+            with self.adapter.connection_named('_test'):
+                return self.adapter.string_add_sql(
+                    src_col, value, location
+                )
+        else:
+            raise TestProcessingException(
+                f'Unknown clause type in update_rows: {clause_type}'
+            )
+
+    def step_relation_types(self, sequence_item):
+        """
+        type: relation_types
+        expect:
+            foo: view
+            bar: table
+        """
+        if 'expect' not in sequence_item:
+            raise TestProcessingException('Invalid relation_types: no expect')
+        expected = self.get_fact(sequence_item['expect'])
+
+        expected_relation_values = {}
+        found_relations = []
+        schemas = set()
+
+        for key, value in expected.items():
+            relation = self._relation_from_name(key)
+            expected_relation_values[relation] = value
+            schemas.update(relation.without_identifier())
+        with self.adapter.connection_named('__test'):
+            for schema in schemas:
+                found_relations.extend(self.adapter.list_relations_without_caching(schema))
+
+        for key, value in expected.items():
+            for relation in found_relations:
+                # this might be too broad
+                if relation.identifier == key:
+                    assert relation.type == value, (
+                        f'Got an unexpected relation type of {relation.type} '
+                        f'for relation {key}, expected {value}'
+                    )
+
+    def step_update_rows(self, sequence_item):
+        """
+            type: update_rows
+            name: base
+            dst_col: some_date
+            clause:
+              type: add_timestamp
+              src_col: some_date
+            where: id > 10
+        """
+        if 'name' not in sequence_item:
+            raise TestProcessingException('Invalid update_rows: no name')
+        if 'dst_col' not in sequence_item:
+            raise TestProcessingException('Invalid update_rows: no dst_col')
+
+        if 'clause' not in sequence_item:
+            raise TestProcessingException('Invalid update_rows: no clause')
+
+        clause = self.get_fact(sequence_item['clause'])
+        if isinstance(clause, dict):
+            clause = self._generate_update_clause(clause)
+
+        where = None
+        if 'where' in sequence_item:
+            where = self.get_fact(sequence_item['where'])
+
+        name = self.get_fact(sequence_item['name'])
+        dst_col = self.get_fact(sequence_item['dst_col'])
+        relation = self._relation_from_name(name)
+
+        with self.adapter.connection_named('_test'):
+            sql = self.adapter.update_column_sql(
+                dst_name=str(relation),
+                dst_column=dst_col,
+                clause=clause,
+                where_clause=where,
+            )
+            self.adapter.execute(sql, auto_begin=True)
+            self.adapter.commit_if_has_connection()
 
     def _write_profile(self, tmpdir):
         profile_data = {
@@ -792,6 +575,46 @@ class DbtItem(pytest.Item):
         with open(os.path.join(tmpdir, 'profiles.yml'), 'w') as fp:
             fp.write(yaml.safe_dump(profile_data))
 
+    def _add_context(self, error_str, idx, test_item):
+        item_type = test_item['type']
+        return f'{error_str} in test index {idx} (item_type={item_type})'
+
+    def run_test_item(self, idx, test_item, tmpdir):
+        try:
+            item_type = test_item['type']
+        except KeyError:
+            raise TestProcessingException(
+                f'Could not find type in {test_item}'
+            ) from None
+        print(f'Executing step {idx+1}/{len(self.sequence)}')
+        try:
+            if item_type == 'dbt':
+                assert os.path.exists(tmpdir)
+                self.step_dbt(test_item, tmpdir)
+            elif item_type == 'run_results':
+                self.step_run_results(test_item, tmpdir)
+            elif item_type == 'catalog':
+                self.step_catalog(test_item, tmpdir)
+            elif item_type == 'relations_equal':
+                self.step_relations_equal(test_item)
+            elif item_type == 'relation_rows':
+                self.step_relation_rows(test_item)
+            elif item_type == 'update_rows':
+                self.step_update_rows(test_item)
+            elif item_type == 'relation_types':
+                self.step_relation_types(test_item)
+            else:
+                raise TestProcessingException(
+                    f'Unknown item type {item_type}'
+                )
+        except AssertionError as exc:
+            if len(exc.args) == 1:
+                arg = self._add_context(exc.args[0], idx, test_item)
+                exc.args = (arg,)
+            else:  # uhhhhhhh
+                exc.args = exc.args + (self._add_context('', idx, test_item),)
+            raise
+
     def runtest(self):
         FACTORY.reset_adapters()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -799,28 +622,19 @@ class DbtItem(pytest.Item):
             self.project.write(tmpdir)
             self.adapter = self._get_adapter(tmpdir)
 
-            for test_item in self.sequence:
-                try:
-                    item_type = test_item['type']
-                except KeyError:
-                    raise TestProcessingException(
-                        f'Could not find type in {test_item}'
-                    ) from None
-                if item_type == 'dbt':
-                    assert os.path.exists(tmpdir)
-                    self.step_dbt(test_item, tmpdir)
-                elif item_type == 'run_results':
-                    self.step_run_results(test_item, tmpdir)
-                elif item_type == 'catalog':
-                    self.step_catalog(test_item, tmpdir)
-                elif item_type == 'relations_equal':
-                    self.step_relations_equal(test_item)
-                elif item_type == 'relation_rows':
-                    self.step_relation_rows(test_item)
-                else:
-                    raise TestProcessingException(
-                        f'Unknown item type {item_type}'
-                    )
+            self.schema_relation = self.adapter.Relation.create(
+                database=self.adapter.config.credentials.database,
+                schema=self.adapter.config.credentials.schema,
+                quote_policy=self.adapter.config.quoting,
+            )
+
+            try:
+                for idx, test_item in enumerate(self.sequence):
+                    self.run_test_item(idx, test_item, tmpdir)
+            finally:
+                with self.adapter.connection_named('__test'):
+                    if self.config.getoption('drop_schema'):
+                        self.adapter.drop_schema(self.schema_relation)
 
         return True
 
@@ -849,11 +663,3 @@ class DbtItem(pytest.Item):
 
     def reportinfo(self):
         return self.fspath, 0, "usecase: {}".format(self.name)
-
-
-class DBTException(Exception):
-    """ custom exception for error reporting. """
-
-
-class TestProcessingException(Exception):
-    pass

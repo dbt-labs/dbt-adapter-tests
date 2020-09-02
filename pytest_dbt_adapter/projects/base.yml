@@ -1,0 +1,44 @@
+name: base
+paths:
+    data/base.csv: files.seeds.base
+    models/view.sql: files.models.base_view
+    models/table.sql: files.models.base_table
+    models/swappable.sql: files.models.base_materialized_var
+    models/schema.yml: files.schemas.base
+dbt_project_yml:
+    models:
+        dbt_test_project:
+
+facts:
+    seed:
+        length: 1
+        names:
+            - base
+    run:
+        length: 3
+        names:
+            - view
+            - table
+            - swappable
+    catalog:
+        nodes:
+            length: 4
+        sources:
+            length: 1
+    persisted_relations:
+        - base
+        - view
+        - table
+        - swappable
+    base:
+        rowcount: 10
+    expected_types_view:
+        base: table
+        view: view
+        table: table
+        swappable: view
+    expected_types_table:
+        base: table
+        view: view
+        table: table
+        swappable: table
