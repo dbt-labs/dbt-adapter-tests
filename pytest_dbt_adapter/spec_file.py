@@ -506,7 +506,7 @@ class DbtItem(pytest.Item):
         for key, value in expected.items():
             relation = self._relation_from_name(key)
             expected_relation_values[relation] = value
-            schemas.update(relation.without_identifier())
+            schemas.add(relation.without_identifier())
         with self.adapter.connection_named('__test'):
             for schema in schemas:
                 found_relations.extend(self.adapter.list_relations_without_caching(schema))
