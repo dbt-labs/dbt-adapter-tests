@@ -5,7 +5,7 @@ import shlex
 import tempfile
 from datetime import datetime
 from itertools import chain, repeat
-from subprocess import run, CalledProcessError
+from subprocess import run, CalledProcessError, PIPE
 from typing import Dict, Any, Iterable
 
 import pytest
@@ -235,7 +235,7 @@ class DbtItem(pytest.Item):
         if cli_vars:
             full_cmd.extend(('--vars', yaml.safe_dump(cli_vars)))
         expect_passes = sequence_item.get('check', True)
-        result = run(full_cmd, check=False, capture_output=True)
+        result = run(full_cmd, check=False, stdout=PIPE, stderr=PIPE)
         print(result.stdout.decode('utf-8'))
         if expect_passes:
             if result.returncode != 0:
