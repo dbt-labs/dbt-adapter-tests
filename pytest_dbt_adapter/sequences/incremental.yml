@@ -21,15 +21,15 @@ sequence:
   - type: dbt
     cmd: run
     vars:
-      seed_name: extended
+      seed_name: added
   - type: relation_rows
-    name: extended
-    length: fact.extended.rowcount
+    name: added
+    length: fact.added.rowcount
   - type: run_results
     length: fact.run.length
   - type: relations_equal
     relations:
-      - extended
+      - added
       - incremental
   - type: dbt
     cmd: docs generate
