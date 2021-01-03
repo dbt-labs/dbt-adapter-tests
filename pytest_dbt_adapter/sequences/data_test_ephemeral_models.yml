@@ -12,8 +12,8 @@ sequence:
       length: fact.test.length
       names: fact.test.names
       attributes:
-        passing.fail: false
-        failing.fail: true
+        passing.status: pass
+        failing.status: fail
     - type: dbt
       cmd: run
     - type: run_results
