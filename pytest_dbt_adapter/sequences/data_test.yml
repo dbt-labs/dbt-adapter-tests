@@ -8,5 +8,5 @@ sequence:
       length: fact.test.length
       names: fact.test.names
       attributes:
-        passing.fail: false
-        failing.fail: true
+        passing.status: pass
+        failing.status: fail

@@ -271,6 +271,17 @@ class DbtItem(pytest.Item):
             attributes[name][keypath] = value
         return attributes
 
+    @staticmethod
+    def _get_name(
+        unique_id: str
+    ) -> str:
+        """ turn a unique_id into just a node name. """
+        # The last part of the unique_id is the name
+        # Example:
+        #   Consider unique_id "test.dbt_test_project.failing"
+        #   Then the name is "failing"
+        return unique_id.split(".")[-1]
+
     def step_run_results(self, sequence_item, tmpdir):
         path = os.path.join(tmpdir, 'project', 'target', 'run_results.json')
 
@@ -302,7 +313,8 @@ class DbtItem(pytest.Item):
 
             for result in results:
                 try:
-                    name = result['node']['name']
+                    unique_id = result['unique_id']
+                    name = self._get_name(unique_id)
                 except KeyError as exc:
                     raise DBTException(
                         f'Invalid result, missing required key {exc}'
@@ -323,8 +335,8 @@ class DbtItem(pytest.Item):
 
             for result in results:
                 try:
-                    node = result['node']
-                    name = node['name']
+                    unique_id = result['unique_id']
+                    name = self._get_name(unique_id)
                 except KeyError as exc:
                     raise DBTException(
                         f'Invalid result, missing required key {exc}'
