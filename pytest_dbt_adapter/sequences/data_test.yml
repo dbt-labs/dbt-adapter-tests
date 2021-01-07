@@ -1,12 +1,12 @@
 name: data_test
 project: data_tests
 sequence:
-    - type: dbt
-      cmd: test
-      check: false
-    - type: run_results
-      length: fact.test.length
-      names: fact.test.names
-      attributes:
-        passing.status: pass
-        failing.status: fail
+  - type: dbt
+    cmd: test
+    check: false
+  - type: run_results
+    length: fact.test.length
+    names: fact.test.names
+    attributes:
+      passing.status: pass
+      failing.status: fail

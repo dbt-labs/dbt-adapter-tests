@@ -273,27 +273,45 @@ class DbtItem(pytest.Item):
 
     @staticmethod
     def _get_name(
-        unique_id: str
+        result: Dict[str, Any],
+        nodes: Dict[str, Any]
     ) -> str:
-        """ turn a unique_id into just a node name. """
-        # The last part of the unique_id is the name
-        # Example:
-        #   Consider unique_id "test.dbt_test_project.failing"
-        #   Then the name is "failing"
-        return unique_id.split(".")[-1]
+        """Given a run result get the unique_id and lookup the name from
+        a dict of nodes mapped to their unique_id.
+        """
+        try:
+            unique_id = result['unique_id']
+        except KeyError as exc:
+            raise DBTException(
+                f'Invalid result, missing required key {exc}'
+            ) from None
+        try:
+            return nodes[unique_id]['name']
+        except KeyError as exc:
+            raise DBTException(
+                f'Invalid node, missing required key {exc}'
+            ) from None
 
     def step_run_results(self, sequence_item, tmpdir):
-        path = os.path.join(tmpdir, 'project', 'target', 'run_results.json')
+        run_results_path = os.path.join(
+            tmpdir, 'project', 'target', 'run_results.json')
+        manifest_path = os.path.join(
+            tmpdir, 'project', 'target', 'manifest.json')
 
         expect_exists = sequence_item.get('exists', True)
 
-        assert expect_exists == os.path.exists(path)
+        assert expect_exists == os.path.exists(run_results_path)
         if not expect_exists:
             return None
 
         try:
-            with open(path) as fp:
-                run_results_data = json.load(fp)
+            with open(
+                run_results_path
+            ) as results_fp, open(
+                manifest_path
+            ) as manifest_fp:
+                run_results_data = json.load(results_fp)
+                manifest_data = json.load(manifest_fp)
         except Exception as exc:
             raise DBTException(
                 f'could not load run_results.json: {exc}'
@@ -304,6 +322,13 @@ class DbtItem(pytest.Item):
             raise DBTException(
                 'Invalid run_results.json - no results'
             ) from None
+        try:
+            nodes = manifest_data['nodes']
+        except KeyError:
+            raise DBTException(
+                'Invalid manifest.json - no nodes'
+            ) from None
+
         if 'length' in sequence_item:
             expected = self.get_fact(sequence_item['length'])
             assert expected == len(results)
@@ -312,13 +337,7 @@ class DbtItem(pytest.Item):
             extra_results_ok = sequence_item.get('extra_results_ok', False)
 
             for result in results:
-                try:
-                    unique_id = result['unique_id']
-                    name = self._get_name(unique_id)
-                except KeyError as exc:
-                    raise DBTException(
-                        f'Invalid result, missing required key {exc}'
-                    ) from None
+                name = self._get_name(result, nodes)
                 if (not extra_results_ok) and (name not in expected_names):
                     raise DBTException(
                         f'Got unexpected name {name} in results'
@@ -334,14 +353,7 @@ class DbtItem(pytest.Item):
             attributes = self._build_expected_attributes_dict(values)
 
             for result in results:
-                try:
-                    unique_id = result['unique_id']
-                    name = self._get_name(unique_id)
-                except KeyError as exc:
-                    raise DBTException(
-                        f'Invalid result, missing required key {exc}'
-                    ) from None
-
+                name = self._get_name(result, nodes)
                 if name in attributes:
                     for key, value in attributes[name].items():
                         try:
@@ -521,7 +533,8 @@ class DbtItem(pytest.Item):
             schemas.add(relation.without_identifier())
         with self.adapter.connection_named('__test'):
             for schema in schemas:
-                found_relations.extend(self.adapter.list_relations_without_caching(schema))
+                found_relations.extend(
+                    self.adapter.list_relations_without_caching(schema))
 
         for key, value in expected.items():
             for relation in found_relations:
