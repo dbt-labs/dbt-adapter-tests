@@ -12,7 +12,7 @@ setup(
     author="Fishtown Analytics",
     author_email="info@fishtownanalytics.com",
     url="https://github.com/fishtown-analytics/dbt-adapter-tests",
-    version='0.5.0',
+    version='0.5.1',
     package_data={
         'pytest_dbt_adapter': [
             'projects/*.yml',
