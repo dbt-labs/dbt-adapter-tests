@@ -10,6 +10,8 @@ You'll need to install this package with `pip install pytest-dbt-adapter` and wr
 
 After installing this package, you should be able to run your spec with `pytest path/to/mytest.dbspec`. You'll need dbt-core and your adapter plugin installed in the environment as well.
 
+This package also includes a module named `dbt_adapter_tests` that includes helpers for writing integration tests with Python if necessary. For maintainability purposes, this should only be used as a last resort for scenarios that are impossible to capture with a specfile.
+
 
 ## Specs
 
