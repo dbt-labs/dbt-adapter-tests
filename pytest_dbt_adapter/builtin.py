@@ -221,14 +221,14 @@ models:
 TEST_PASSING_DATA_TEST = """
 select * from (
 	select 1 as id
-) sbq
+) as my_subquery
 where id = 2
 """
 
 TEST_FAILING_DATA_TEST = """
 select * from (
 	select 1 as id
-) sbq
+) as my_subquery
 where id = 1
 """
 
