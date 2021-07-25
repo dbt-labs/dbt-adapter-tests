@@ -219,11 +219,17 @@ models:
 
 
 TEST_PASSING_DATA_TEST = """
-select 1 as id where id = 2
+select * from (
+	select 1 as id
+) as my_subquery
+where id = 2
 """
 
 TEST_FAILING_DATA_TEST = """
-select 1 as id where id = 1
+select * from (
+	select 1 as id
+) as my_subquery
+where id = 1
 """
 
 
