@@ -1,8 +1,8 @@
 name: snapshot_strategy_check_cols
 paths:
-    data/base.csv: files.seeds.base
-    data/newcolumns.csv: files.seeds.newcolumns
-    data/added.csv: files.seeds.added
+    seeds/base.csv: files.seeds.base
+    seeds/newcolumns.csv: files.seeds.newcolumns
+    seeds/added.csv: files.seeds.added
     snapshots/cc_all_snapshot.sql: files.snapshots.check_cols_all
     snapshots/cc_date_snapshot.sql: files.snapshots.check_cols_date
     snapshots/cc_name_snapshot.sql: files.snapshots.check_cols_name
