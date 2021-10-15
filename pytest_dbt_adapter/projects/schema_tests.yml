@@ -1,7 +1,7 @@
 name: schema_tests
 paths:
-    data/base.csv: files.seeds.base
-    data/schema.yml: files.schemas.test_seed
+    seeds/base.csv: files.seeds.base
+    seeds/schema.yml: files.schemas.test_seed
     models/view_model.sql: files.models.base_view
     models/table_model.sql: files.models.base_table
     models/schema.yml: files.schemas.base
