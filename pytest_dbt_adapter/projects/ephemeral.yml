@@ -1,13 +1,11 @@
 name: ephemeral
 paths:
-    data/base.csv: files.seeds.base
+    seeds/base.csv: files.seeds.base
     models/ephemeral.sql: files.models.ephemeral
     models/view_model.sql: files.models.ephemeral_view
     models/table_model.sql: files.models.ephemeral_table
     models/schema.yml: files.schemas.base
-dbt_project_yml:
-  seed-paths:
-    - data
+
 facts:
     seed:
         length: 1

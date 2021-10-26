@@ -5,8 +5,7 @@ paths:
 dbt_project_yml:
     test-paths:
         - tests
-    seed-paths:
-        - data
+
 facts:
     test:
         length: 2

@@ -1,12 +1,9 @@
 name: incremental
 paths:
-    data/base.csv: files.seeds.base
-    data/added.csv: files.seeds.added
+    seeds/base.csv: files.seeds.base
+    seeds/added.csv: files.seeds.added
     models/incremental.sql: files.models.incremental
     models/schema.yml: files.schemas.base
-dbt_project_yml:
-    seed-paths:
-        - data
 facts:
     seed:
         length: 2

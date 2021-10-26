@@ -1,12 +1,10 @@
 name: snapshot_strategy_timestamp
 paths:
-    data/base.csv: files.seeds.base
-    data/newcolumns.csv: files.seeds.newcolumns
-    data/added.csv: files.seeds.added
+    seeds/base.csv: files.seeds.base
+    seeds/newcolumns.csv: files.seeds.newcolumns
+    seeds/added.csv: files.seeds.added
     snapshots/ts_snapshot.sql: files.snapshots.timestamp
-dbt_project_yml:
-  seed-paths:
-    - data
+
 facts:
     seed:
         length: 3

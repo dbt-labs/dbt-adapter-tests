@@ -1,6 +1,6 @@
 name: base
 paths:
-    data/base.csv: files.seeds.base
+    seeds/base.csv: files.seeds.base
     models/view_model.sql: files.models.base_view
     models/table_model.sql: files.models.base_table
     models/swappable.sql: files.models.base_materialized_var
@@ -8,8 +8,7 @@ paths:
 dbt_project_yml:
     models:
         dbt_test_project:
-    seed-paths:
-        - data
+        
 facts:
     seed:
         length: 1

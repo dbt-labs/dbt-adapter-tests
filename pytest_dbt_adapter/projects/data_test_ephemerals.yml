@@ -1,6 +1,6 @@
 name: data_test_ephemeral_models
 paths:
-    data/base.csv: files.seeds.base
+    seeds/base.csv: files.seeds.base
     models/ephemeral.sql: files.models.ephemeral_with_cte
     models/passing_model.sql: files.tests.ephemeral.passing
     models/failing_model.sql: files.tests.ephemeral.failing
@@ -10,8 +10,7 @@ paths:
 dbt_project_yml:
     test-paths:
         - tests
-    seed-paths:
-        - data
+
 facts:
     seed:
         length: 1
