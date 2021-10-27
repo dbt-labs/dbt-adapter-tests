@@ -4,6 +4,7 @@ paths:
     seeds/newcolumns.csv: files.seeds.newcolumns
     seeds/added.csv: files.seeds.added
     snapshots/ts_snapshot.sql: files.snapshots.timestamp
+
 facts:
     seed:
         length: 3

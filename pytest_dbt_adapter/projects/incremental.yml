@@ -1,29 +1,30 @@
 name: incremental
 paths:
-  seeds/base.csv: files.seeds.base
-  seeds/added.csv: files.seeds.added
-  models/incremental.sql: files.models.incremental
-  models/schema.yml: files.schemas.base
+    seeds/base.csv: files.seeds.base
+    seeds/added.csv: files.seeds.added
+    models/incremental.sql: files.models.incremental
+    models/schema.yml: files.schemas.base
+           
 facts:
-  seed:
-    length: 2
-    names:
-      - base
-      - added
-  run:
-    length: 1
-    names:
-      - incremental
-  catalog:
-    nodes:
-      length: 3
-    sources:
-      length: 1
-  persisted_relations:
-    - base
-    - added
-    - incremental
-  base:
-    rowcount: 10
-  added:
-    rowcount: 20
+    seed:
+        length: 2
+        names:
+            - base
+            - added
+    run:
+        length: 1
+        names:
+            - incremental
+    catalog:
+        nodes:
+            length: 3
+        sources:
+            length: 1
+    persisted_relations:
+        - base
+        - added
+        - incremental
+    base:
+        rowcount: 10
+    added:
+        rowcount: 20

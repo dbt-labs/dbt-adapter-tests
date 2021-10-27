@@ -7,6 +7,7 @@ paths:
     models/schema.yml: files.schemas.base
     models/schema_view.yml: files.schemas.test_view
     models/schema_table.yml: files.schemas.test_table
+
 facts:
     seed:
         length: 1

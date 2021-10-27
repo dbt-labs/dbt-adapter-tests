@@ -6,6 +6,7 @@ paths:
     snapshots/cc_all_snapshot.sql: files.snapshots.check_cols_all
     snapshots/cc_date_snapshot.sql: files.snapshots.check_cols_date
     snapshots/cc_name_snapshot.sql: files.snapshots.check_cols_name
+
 facts:
     seed:
         length: 3

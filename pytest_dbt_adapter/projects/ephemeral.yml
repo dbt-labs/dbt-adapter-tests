@@ -5,6 +5,7 @@ paths:
     models/view_model.sql: files.models.ephemeral_view
     models/table_model.sql: files.models.ephemeral_table
     models/schema.yml: files.schemas.base
+
 facts:
     seed:
         length: 1
