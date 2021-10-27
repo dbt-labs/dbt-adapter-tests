@@ -8,7 +8,7 @@ paths:
 dbt_project_yml:
     models:
         dbt_test_project:
-        
+
 facts:
     seed:
         length: 1

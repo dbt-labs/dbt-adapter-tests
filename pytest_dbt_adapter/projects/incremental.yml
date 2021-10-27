@@ -4,6 +4,7 @@ paths:
     seeds/added.csv: files.seeds.added
     models/incremental.sql: files.models.incremental
     models/schema.yml: files.schemas.base
+           
 facts:
     seed:
         length: 2
