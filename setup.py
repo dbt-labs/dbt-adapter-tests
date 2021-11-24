@@ -8,11 +8,11 @@ def read(path):
 
 setup(
     name='pytest-dbt-adapter',
-    packages=['pytest_dbt_adapter', 'dbt_adapter_tests'],
-    author="Fishtown Analytics",
-    author_email="info@fishtownanalytics.com",
-    url="https://github.com/fishtown-analytics/dbt-adapter-tests",
-    version='0.5.1',
+    packages=['pytest_dbt_adapter'],
+    author="dbt Labs",
+    author_email="info@dbtlabs.com",
+    url="https://github.com/dbt-labs/dbt-adapter-tests",
+    version='0.6.0',
     package_data={
         'pytest_dbt_adapter': [
             'projects/*.yml',
