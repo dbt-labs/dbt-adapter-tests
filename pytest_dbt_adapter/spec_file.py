@@ -355,9 +355,13 @@ class DbtItem(pytest.Item):
             for result in results:
                 name = self._get_name(result, nodes)
                 if name in attributes:
-                    for key, value in attributes[name].items():
+                    for key, expected_value in attributes[name].items():
                         try:
-                            self._get_from_dict(result, key.split('.'))
+                            value = self._get_from_dict(result, key.split('.'))
+                            if value != expected_value:
+                                raise DBTException (
+                                    f'Expected attribute value \'{expected_value}\' but got \'{value}\' for attribute \'{key}\''
+                                ) from None
                         except KeyError as exc:
                             raise DBTException(
                                 f'Invalid result, missing required key {exc}'
