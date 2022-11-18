@@ -1,5 +1,5 @@
 > :warning: **THIS SUITE IS NO LONGER THE RECOMMENDED WAY TO TEST ADAPTERS.**
-If you are building and testing a new dbt adapter, please read instead: ["Testing a new adapter"](https://docs.getdbt.com/docs/contributing/testing-a-new-adapter)
+If you are building and testing a new dbt adapter, please read instead: ["Testing a new adapter"](https://docs.getdbt.com/guides/advanced/adapter-development/4-testing-a-new-adapter)
 
 ## Installation and use
 
