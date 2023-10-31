@@ -1,3 +1,4 @@
+from argparse import Namespace
 import json
 import os
 import random
@@ -17,7 +18,8 @@ from .builtin import BUILTIN_TEST_SEQUENCES, DEFAULT_PROJECTS, DbtProject
 
 from dbt.adapters.factory import FACTORY
 from dbt.config import RuntimeConfig
-from dbt.main import parse_args
+from dbt.flags import set_from_args
+from dbt.cli.main import compile
 
 
 class DbtSpecFile(pytest.File):
@@ -104,11 +106,15 @@ class DbtItem(pytest.Item):
 
     def _get_adapter(self, tmpdir):
         project_path = os.path.join(tmpdir, 'project')
-        args = parse_args([
-            'compile', '--profile', 'dbt-pytest', '--target', 'default',
+
+        # make a dummy context to get the parameters
+        ctx = compile.make_context("compile", [
+            '--profile', 'dbt-pytest', '--target', 'default',
             '--project-dir', project_path, '--profiles-dir', tmpdir,
             '--vars', yaml.safe_dump(self._base_vars()),
         ])
+        args = Namespace(**ctx.params)
+
         with open(os.path.join(args.profiles_dir, 'profiles.yml')) as fp:
             data = yaml.safe_load(fp)
             try:
@@ -130,6 +136,10 @@ class DbtItem(pytest.Item):
             except KeyError:
                 raise ValueError(
                     f'target {args.target} in {args.profile} has no type')
+
+        # initialize the global flags
+        set_from_args(args, None)
+
         _ = FACTORY.load_plugin(adapter_type)
         config = RuntimeConfig.from_args(args)
 
@@ -355,9 +365,13 @@ class DbtItem(pytest.Item):
             for result in results:
                 name = self._get_name(result, nodes)
                 if name in attributes:
-                    for key, value in attributes[name].items():
+                    for key, expected_value in attributes[name].items():
                         try:
-                            self._get_from_dict(result, key.split('.'))
+                            value = self._get_from_dict(result, key.split('.'))
+                            if value != expected_value:
+                                raise DBTException(
+                                    f'Expected attribute value \'{expected_value}\' but got \'{value}\' for attribute \'{key}\''
+                                ) from None
                         except KeyError as exc:
                             raise DBTException(
                                 f'Invalid result, missing required key {exc}'
@@ -611,7 +625,7 @@ class DbtItem(pytest.Item):
             raise TestProcessingException(
                 f'Could not find type in {test_item}'
             ) from None
-        print(f'Executing step {idx+1}/{len(self.sequence)}')
+        print(f'Executing step {idx + 1}/{len(self.sequence)}')
         try:
             if item_type == 'dbt':
                 assert os.path.exists(tmpdir)
